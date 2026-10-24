@@ -62,6 +62,7 @@ final class Recs {
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
     private static final int CACHE_VERSION = 4;
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
+    private static final String NUVIO_PKG = "com.nuvio.tv";
     /** Service name on TMDB (part of the name, lowercase) → TV app (HomeApps key, package). */
     private static final String[][] SERVICES = {
         {"netflix", "netflix", "com.netflix.ninja"},
@@ -100,6 +101,7 @@ final class Recs {
         SERVICE_NAME.put("okko", "Okko");
         SERVICE_NAME.put("crunchyroll", "Crunchyroll");
         SERVICE_NAME.put("oneplay", "Oneplay");
+        SERVICE_NAME.put("nuvio", "Nuvio");
     }
     /** Country for "what streams where" (config.properties "tmdb_region", e.g. US, GB, BR). */
     static final String REGION = Config.TMDB_REGION.trim().toUpperCase(Locale.ROOT);
@@ -392,6 +394,15 @@ final class Recs {
     // MARK: - TMDB
 
     private void fetchList(int p) throws Exception {
+        if (traktOn()) {
+            List<Pick> t = fetchTrakt();
+            if (t.isEmpty()) throw new IOException("Trakt list is empty");
+            picks = t;
+            period = p;
+            listAt = System.currentTimeMillis();
+            listLanguage = Ui.language;
+            return;
+        }
         // None of the services we know is on the TV (or hide_services hides them all): no region would change that.
         boolean any = false;
         for (String[] s : SERVICES) any |= installed(s[2]);
@@ -614,8 +625,58 @@ final class Recs {
 
     private long sourceStamp() {
         long stamp = (Config.TMDB_KEY.hashCode() * 31L + REGION.hashCode()) * 31L + (Config.HIDE_ANIMATION ? 1 : 0);
+        stamp = stamp * 31L + (Config.TRAKT_CLIENT_ID + Config.TRAKT_LIST).hashCode();
         for (String[] service : SERVICES) stamp = stamp * 31L + (installed(service[2]) ? service[2].hashCode() : 0);
         return stamp;
+    }
+
+    // MARK: - Trakt (smart list titles, opened in Nuvio)
+
+    private static boolean traktOn() {
+        return !Config.TRAKT_CLIENT_ID.trim().isEmpty() && !Config.TRAKT_LIST.trim().isEmpty();
+    }
+
+    private List<Pick> fetchTrakt() throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL("https://api.trakt.tv/smart-lists/"
+                + URLEncoder.encode(Config.TRAKT_LIST.trim(), "UTF-8") + "/items?limit=40").openConnection();
+        c.setConnectTimeout(8000);
+        c.setReadTimeout(10000);
+        c.setRequestProperty("Content-Type", "application/json");
+        c.setRequestProperty("trakt-api-version", "2");
+        c.setRequestProperty("trakt-api-key", Config.TRAKT_CLIENT_ID.trim());
+        c.setRequestProperty("User-Agent", "FreeMyTV/1.0");
+        JSONArray items;
+        try {
+            int code = c.getResponseCode();
+            if (code != 200) throw new IOException("Trakt returned HTTP " + code);
+            items = new JSONArray(read(c.getInputStream()));
+        } finally {
+            c.disconnect();
+        }
+        List<Pick> out = new ArrayList<>();
+        for (int i = 0; i < items.length() && out.size() < 24; i++) {
+            JSONObject it = items.getJSONObject(i);
+            String type = it.optString("type");
+            boolean movie = type.equals("movie");
+            if (!movie && !type.equals("show")) continue;
+            JSONObject o = it.optJSONObject(type);
+            JSONObject ids = o == null ? null : o.optJSONObject("ids");
+            if (ids == null || ids.isNull("tmdb") || ids.isNull("imdb")) continue;
+            Pick p = new Pick();
+            p.id = ids.getInt("tmdb");
+            p.kind = movie ? "movie" : "tv";
+            p.title = o.optString("title");
+            p.app = "nuvio";
+            p.pkg = NUVIO_PKG;
+            p.link = (movie ? "nuvio://movie/" : "nuvio://detail/tv/") + ids.getString("imdb");
+            try {
+                fetchDetails(p);
+            } catch (Exception e) {
+                continue;
+            }
+            if (p.backdrop != null) out.add(p);
+        }
+        return out;
     }
 
     // MARK: - Watchmode (the title's own page in its app; the free plan's web addresses are what the apps open)
