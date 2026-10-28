@@ -62,7 +62,7 @@ final class Recs {
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
     private static final int CACHE_VERSION = 4;
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
-    private static final String NUVIO_PKG = "com.nuvio.tv";
+    private static final String NUVIO_PKG = "com.nuvio.livetv";
     /** Service name on TMDB (part of the name, lowercase) → TV app (HomeApps key, package). */
     private static final String[][] SERVICES = {
         {"netflix", "netflix", "com.netflix.ninja"},
